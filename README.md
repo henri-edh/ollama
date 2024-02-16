@@ -12,11 +12,11 @@ Get up and running with large language models locally.
 
 [Download](https://ollama.com/download/Ollama-darwin.zip)
 
-### Windows
+### Windows preview
 
-Coming soon! For now, you can install Ollama on Windows via WSL2.
+[Download](https://ollama.com/download/OllamaSetup.exe)
 
-### Linux & WSL2
+### Linux
 
 ```
 curl -fsSL https://ollama.com/install.sh | sh
@@ -310,6 +310,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Semantic Kernel - Python](https://github.com/microsoft/semantic-kernel/tree/main/python/semantic_kernel/connectors/ai/ollama)
 - [Haystack](https://github.com/deepset-ai/haystack-integrations/blob/main/integrations/ollama.md)
 - [Ollama for R - rollama](https://github.com/JBGruber/rollama)
+- [Ollama-ex for Elixir](https://github.com/lebrunel/ollama-ex)
 
 ### Mobile
 
