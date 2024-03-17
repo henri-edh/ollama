@@ -354,8 +354,15 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					}
 
 					if args[1] == "system" {
-						opts.System = sb.String()
-						opts.Messages = append(opts.Messages, api.Message{Role: "system", Content: opts.System})
+						opts.System = sb.String() // for display in modelfile
+						newMessage := api.Message{Role: "system", Content: sb.String()}
+						// Check if the slice is not empty and the last message is from 'system'
+						if len(opts.Messages) > 0 && opts.Messages[len(opts.Messages)-1].Role == "system" {
+							// Replace the last message
+							opts.Messages[len(opts.Messages)-1] = newMessage
+						} else {
+							opts.Messages = append(opts.Messages, newMessage)
+						}
 						fmt.Println("Set system message.")
 						sb.Reset()
 					} else if args[1] == "template" {
@@ -463,7 +470,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			} else {
 				usage()
 			}
-		case line == "/exit", line == "/bye":
+		case strings.HasPrefix(line, "/exit"), strings.HasPrefix(line, "/bye"):
 			return nil
 		case strings.HasPrefix(line, "/"):
 			args := strings.Fields(line)

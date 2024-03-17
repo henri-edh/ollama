@@ -77,7 +77,6 @@ func TestChatPrompt(t *testing.T) {
 	tests := []struct {
 		name     string
 		template string
-		system   string
 		messages []api.Message
 		window   int
 		want     string
@@ -90,16 +89,6 @@ func TestChatPrompt(t *testing.T) {
 			},
 			window: 1024,
 			want:   "[INST] Hello [/INST]",
-		},
-		{
-			name:     "with default system message",
-			system:   "You are a Wizard.",
-			template: "[INST] {{ if .System }}<<SYS>>{{ .System }}<</SYS>> {{ end }}{{ .Prompt }} [/INST]",
-			messages: []api.Message{
-				{Role: "user", Content: "Hello"},
-			},
-			window: 1024,
-			want:   "[INST] <<SYS>>You are a Wizard.<</SYS>> Hello [/INST]",
 		},
 		{
 			name:     "with system message",
@@ -166,7 +155,7 @@ func TestChatPrompt(t *testing.T) {
 				{Role: "user", Content: "Hello", Images: []api.ImageData{[]byte("base64")}},
 			},
 			window: 1024,
-			want:   "You are a Wizard. Hello [img-0]",
+			want:   "You are a Wizard. [img-0] Hello",
 		},
 		{
 			name:     "images truncated",
@@ -176,7 +165,7 @@ func TestChatPrompt(t *testing.T) {
 				{Role: "user", Content: "Hello", Images: []api.ImageData{[]byte("img1"), []byte("img2")}},
 			},
 			window: 1024,
-			want:   "You are a Wizard. Hello [img-1]",
+			want:   "You are a Wizard. [img-0] [img-1] Hello",
 		},
 		{
 			name:     "empty list",
@@ -184,24 +173,6 @@ func TestChatPrompt(t *testing.T) {
 			messages: []api.Message{},
 			window:   1024,
 			want:     "",
-		},
-		{
-			name:     "empty list default system",
-			system:   "You are a Wizard.",
-			template: "{{ .System }} {{ .Prompt }}",
-			messages: []api.Message{},
-			window:   1024,
-			want:     "You are a Wizard. ",
-		},
-		{
-			name:     "empty user message",
-			system:   "You are a Wizard.",
-			template: "{{ .System }} {{ .Prompt }}",
-			messages: []api.Message{
-				{Role: "user", Content: ""},
-			},
-			window: 1024,
-			want:   "You are a Wizard. ",
 		},
 		{
 			name:     "empty prompt",
@@ -221,13 +192,13 @@ func TestChatPrompt(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ChatPrompt(tc.template, tc.system, tc.messages, tc.window, encode)
+			got, err := ChatPrompt(tc.template, tc.messages, tc.window, encode)
 			if err != nil {
 				t.Errorf("error = %v", err)
 			}
 
 			if got != tc.want {
-				t.Errorf("got = %v, want %v", got, tc.want)
+				t.Errorf("got: %q, want: %q", got, tc.want)
 			}
 		})
 	}

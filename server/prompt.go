@@ -91,7 +91,7 @@ func countTokens(tmpl string, system string, prompt string, response string, enc
 }
 
 // ChatPrompt builds up a prompt from a series of messages, truncating based on context window size
-func ChatPrompt(tmpl string, system string, messages []api.Message, window int, encode func(string) ([]int, error)) (string, error) {
+func ChatPrompt(tmpl string, messages []api.Message, window int, encode func(string) ([]int, error)) (string, error) {
 	type prompt struct {
 		System   string
 		Prompt   string
@@ -102,11 +102,6 @@ func ChatPrompt(tmpl string, system string, messages []api.Message, window int, 
 	}
 
 	var p prompt
-
-	// Set the first system prompt to the model's system prompt
-	if system != "" {
-		p.System = system
-	}
 
 	// iterate through messages to build up {system,user,response} prompts
 	var imgId int
@@ -126,13 +121,15 @@ func ChatPrompt(tmpl string, system string, messages []api.Message, window int, 
 				p = prompt{}
 			}
 
-			p.Prompt = msg.Content
-
+			var sb strings.Builder
 			for range msg.Images {
-				p.Prompt += fmt.Sprintf(" [img-%d]", imgId)
+				fmt.Fprintf(&sb, "[img-%d] ", imgId)
 				p.images = append(p.images, imgId)
 				imgId += 1
 			}
+
+			sb.WriteString(msg.Content)
+			p.Prompt = sb.String()
 		case "assistant":
 			if p.Response != "" {
 				prompts = append(prompts, p)

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"log/slog"
 	"net/http"
@@ -23,6 +25,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/jmorganca/ollama/api"
+	"github.com/jmorganca/ollama/convert"
 	"github.com/jmorganca/ollama/llm"
 	"github.com/jmorganca/ollama/parser"
 	"github.com/jmorganca/ollama/version"
@@ -50,6 +53,10 @@ type Model struct {
 	Size           int64
 	Options        map[string]interface{}
 	Messages       []Message
+}
+
+func (m *Model) IsEmbedding() bool {
+	return slices.Contains(m.Config.ModelFamilies, "bert") || slices.Contains(m.Config.ModelFamilies, "nomic-bert")
 }
 
 type Message struct {
@@ -312,7 +319,27 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 				c.Args = blobPath
 			}
 
-			bin, err := os.Open(realpath(modelFileDir, c.Args))
+			pathName := realpath(modelFileDir, c.Args)
+
+			ggufName, err := convertSafetensors(name, pathName)
+			if err != nil {
+				var pathErr *fs.PathError
+				switch {
+				case errors.Is(err, zip.ErrFormat):
+					// it's not a safetensor archive
+				case errors.As(err, &pathErr):
+					// it's not a file on disk, could be a model reference
+				default:
+					return err
+				}
+			}
+
+			if ggufName != "" {
+				pathName = ggufName
+				defer os.RemoveAll(ggufName)
+			}
+
+			bin, err := os.Open(pathName)
 			if err != nil {
 				// not a file on disk so must be a model reference
 				modelpath := ParseModelPath(c.Args)
@@ -446,7 +473,13 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 			}
 			defer bin.Close()
 
-			layer, err := NewLayer(bin, mediatype)
+			ggml, err := llm.DecodeGGML(bin)
+			if err != nil {
+				return err
+			}
+
+			sr := io.NewSectionReader(bin, 0, ggml.Size)
+			layer, err := NewLayer(sr, mediatype)
 			if err != nil {
 				return err
 			}
@@ -588,6 +621,73 @@ func CreateModel(ctx context.Context, name, modelFileDir string, commands []pars
 	return nil
 }
 
+func convertSafetensors(name, fn string) (string, error) {
+	r, err := zip.OpenReader(fn)
+	if err != nil {
+		return "", err
+	}
+	defer r.Close()
+
+	tempDir, err := os.MkdirTemp("", "ollama-convert")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tempDir)
+
+	for _, f := range r.File {
+		fpath := filepath.Join(tempDir, f.Name)
+		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			return "", err
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			return "", err
+		}
+
+		_, err = io.Copy(outFile, rc)
+		if err != nil {
+			return "", err
+		}
+
+		outFile.Close()
+		rc.Close()
+	}
+
+	params, err := convert.GetParams(tempDir)
+	if err != nil {
+		return "", err
+	}
+
+	SupportedArchs := []string{
+		"MistralForCausalLM",
+	}
+
+	for _, arch := range params.Architectures {
+		if !slices.Contains(SupportedArchs, arch) {
+			return "", fmt.Errorf("this safetensors model is not yet supported")
+		}
+	}
+
+	t, err := convert.GetSafeTensors(tempDir)
+	if err != nil {
+		return "", err
+	}
+
+	vocab, err := convert.LoadTokens(tempDir)
+	if err != nil {
+		return "", err
+	}
+
+	fn, err = convert.WriteGGUF(name, t, params, vocab)
+	if err != nil {
+		return "", err
+	}
+
+	return fn, nil
+}
+
 func CopyModel(src, dest string) error {
 	srcModelPath := ParseModelPath(src)
 	srcPath, err := srcModelPath.GetManifestPath()
@@ -695,9 +795,7 @@ func PruneLayers() error {
 
 	for _, blob := range blobs {
 		name := blob.Name()
-		if runtime.GOOS == "windows" {
-			name = strings.ReplaceAll(name, "-", ":")
-		}
+		name = strings.ReplaceAll(name, "-", ":")
 		if strings.HasPrefix(name, "sha256:") {
 			deleteMap[name] = struct{}{}
 		}
@@ -1103,18 +1201,7 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		req.ContentLength = contentLength
 	}
 
-	proxyURL, err := http.ProxyFromEnvironment(req)
-	if err != nil {
-		return nil, err
-	}
-
-	client := http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-		},
-	}
-
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

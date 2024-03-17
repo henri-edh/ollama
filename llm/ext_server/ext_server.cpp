@@ -80,7 +80,7 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
     params.main_gpu = sparams->main_gpu;
     params.use_mlock = sparams->use_mlock;
     params.use_mmap = sparams->use_mmap;
-    params.numa = sparams->numa;
+    params.numa = (ggml_numa_strategy)sparams->numa;
     params.embedding = sparams->embedding;
     if (sparams->model != NULL) {
       params.model = sparams->model;
@@ -111,18 +111,15 @@ void llama_server_init(ext_server_params *sparams, ext_server_resp_t *err) {
     }
 #endif
 
-    llama_backend_init(params.numa);
+    llama_backend_init();
+    llama_numa_init(params.numa);
 
-    // load the model
-    if (!llama->load_model(params)) {
-      // TODO - consider modifying the logging logic or patching load_model so
-      // we can capture more detailed error messages and pass them back to the
-      // caller for better UX
-      err->id = -1;
-      snprintf(err->msg, err->msg_len, "error loading model %s",
-               params.model.c_str());
-      return;
-    }
+  if (!llama->load_model(params)) { 
+    // an error occurred that was not thrown
+    err->id = -1;
+    snprintf(err->msg, err->msg_len, "error loading model %s", params.model.c_str());
+    return;
+  }
 
     llama->initialize();
   } catch (std::exception &e) {
@@ -145,9 +142,9 @@ void llama_server_start() {
       llama->queue_tasks.on_new_task(std::bind(
         &llama_server_context::process_single_task, llama, std::placeholders::_1));
       llama->queue_tasks.on_finish_multitask(std::bind(
-          &llama_server_context::on_finish_multitask, llama, std::placeholders::_1));
-      llama->queue_tasks.on_all_tasks_finished(std::bind(
-          &llama_server_context::run_on_all_tasks_finished, llama));
+        &llama_server_context::on_finish_multitask, llama, std::placeholders::_1));
+      llama->queue_tasks.on_run_slots(std::bind(
+        &llama_server_context::update_slots, llama));
       llama->queue_results.on_multitask_update(std::bind(
           &llama_server_queue::update_multitask,
           &llama->queue_tasks,
@@ -208,7 +205,6 @@ void llama_server_completion(const char *json_req, ext_server_resp_t *resp) {
 void llama_server_completion_next_result(const int task_id,
                                          ext_server_task_result_t *resp) {
   assert(llama != NULL && resp != NULL);
-  std::string msg;
   resp->id = -1;
   resp->stop = false;
   resp->error = false;
