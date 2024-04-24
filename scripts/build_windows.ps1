@@ -30,7 +30,7 @@ function checkEnv() {
     
     $script:INNO_SETUP_DIR=(get-item "C:\Program Files*\Inno Setup*\")[0]
 
-    $script:DEPS_DIR="${script:SRC_DIR}\dist\windeps"
+    $script:DEPS_DIR="${script:SRC_DIR}\dist\windows-amd64"
     $env:CGO_ENABLED="1"
     echo "Checking version"
     if (!$env:VERSION) {
@@ -74,22 +74,22 @@ function buildOllama() {
     } else {
         write-host "Skipping generate step with OLLAMA_SKIP_GENERATE set"
     }
-    & go build -trimpath -ldflags "-s -w -X=github.com/jmorganca/ollama/version.Version=$script:VERSION -X=github.com/jmorganca/ollama/server.mode=release" .
+    & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     if ("${env:KEY_CONTAINER}") {
         & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
             /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} ollama.exe
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     }
-    New-Item -ItemType Directory -Path .\dist -Force
-    cp .\ollama.exe .\dist\ollama-windows-amd64.exe
+    New-Item -ItemType Directory -Path .\dist\windows-amd64\ -Force
+    cp .\ollama.exe .\dist\windows-amd64\ollama-windows-amd64.exe
 }
 
 function buildApp() {
     write-host "Building Ollama App"
     cd "${script:SRC_DIR}\app"
     & windres -l 0 -o ollama.syso ollama.rc
-    & go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/jmorganca/ollama/version.Version=$script:VERSION -X=github.com/jmorganca/ollama/server.mode=release" .
+    & go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     if ("${env:KEY_CONTAINER}") {
         & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
@@ -101,7 +101,6 @@ function buildApp() {
 function gatherDependencies() {
     write-host "Gathering runtime dependencies"
     cd "${script:SRC_DIR}"
-    rm -ea 0 -recurse -force -path "${script:DEPS_DIR}"
     md "${script:DEPS_DIR}" -ea 0 > $null
 
     # TODO - this varies based on host build system and MSVC version - drive from dumpbin output
@@ -124,7 +123,15 @@ function gatherDependencies() {
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
     }
-
+    if ($null -ne $env:HIP_PATH) {
+        # Assumes v5.7, may need adjustments for v6
+        rm -ea 0 -recurse -force -path "${script:DEPS_DIR}\rocm\"
+        md "${script:DEPS_DIR}\rocm\rocblas\library\" -ea 0 > $null
+        cp "${env:HIP_PATH}\bin\hipblas.dll" "${script:DEPS_DIR}\rocm\"
+        cp "${env:HIP_PATH}\bin\rocblas.dll" "${script:DEPS_DIR}\rocm\"
+        # amdhip64.dll dependency comes from the driver and must be installed on the host to use AMD GPUs
+        cp "${env:HIP_PATH}\bin\rocblas\library\*" "${script:DEPS_DIR}\rocm\rocblas\library\"
+    }
 }
 
 function buildInstaller() {
@@ -139,12 +146,18 @@ function buildInstaller() {
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }
 
+function distZip() {
+    write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64.zip"
+    Compress-Archive -Path "${script:SRC_DIR}\dist\windows-amd64\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-amd64.zip" -Force
+}
+
 try {
     checkEnv
     buildOllama
     buildApp
     gatherDependencies
     buildInstaller
+    distZip
 } catch {
     write-host "Build Failed"
     write-host $_
