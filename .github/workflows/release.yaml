@@ -28,6 +28,7 @@ jobs:
           security unlock-keychain -p password build.keychain
           security import certificate.p12 -k build.keychain -P $MACOS_SIGNING_KEY_PASSWORD -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k password build.keychain
+          security set-keychain-settings -lut 3600 build.keychain
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -331,8 +332,6 @@ jobs:
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$env:PATH"
           $env:OLLAMA_SKIP_GENERATE="1"
-          $env:NVIDIA_DIR=$(resolve-path ".\dist\deps")
-          $env:HIP_PATH=$(resolve-path ".\dist\deps")
           & .\scripts\build_windows.ps1
       - uses: actions/upload-artifact@v4
         with:
