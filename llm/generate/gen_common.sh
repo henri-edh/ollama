@@ -69,22 +69,10 @@ git_module_setup() {
 }
 
 apply_patches() {
-    # Wire up our CMakefile
-    if ! grep ollama ${LLAMACPP_DIR}/CMakeLists.txt; then
-        echo 'add_subdirectory(../ext_server ext_server) # ollama' >>${LLAMACPP_DIR}/CMakeLists.txt
-    fi
-
-    if [ -n "$(ls -A ../patches/*.diff)" ]; then
-        # apply temporary patches until fix is upstream
-        for patch in ../patches/*.diff; do
-            for file in $(grep "^+++ " ${patch} | cut -f2 -d' ' | cut -f2- -d/); do
-                (cd ${LLAMACPP_DIR}; git checkout ${file})
-            done
-        done
-        for patch in ../patches/*.diff; do
-            (cd ${LLAMACPP_DIR} && git apply ${patch})
-        done
-    fi
+    # apply temporary patches until fix is upstream
+    for patch in ../patches/*.patch; do
+        git -c 'user.name=nobody' -c 'user.email=<>' -C ${LLAMACPP_DIR} am ${patch}
+    done
 }
 
 build() {
@@ -137,7 +125,7 @@ wait_for_compress() {
 
 install() {
     echo "Installing libraries to bin dir ${BUILD_DIR}/bin/"
-    for lib in $(find ${BUILD_DIR} -name \*.${LIB_EXT}); do
+    for lib in $(find ${BUILD_DIR} -name \*.${LIB_EXT} | grep -v "${BUILD_DIR}/bin/" ); do
         rm -f "${BUILD_DIR}/bin/$(basename ${lib})"
         cp -af "${lib}" "${BUILD_DIR}/bin/"
     done
