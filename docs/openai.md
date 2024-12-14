@@ -61,7 +61,7 @@ embeddings = client.embeddings.create(
 ```
 #### Structured outputs
 ```py
-rom pydantic import BaseModel
+from pydantic import BaseModel
 from openai import OpenAI
 
 client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
@@ -215,7 +215,7 @@ curl http://localhost:11434/v1/embeddings \
 - [x] JSON mode
 - [x] Reproducible outputs
 - [x] Vision
-- [x] Tools (streaming support coming soon)
+- [x] Tools
 - [ ] Logprobs
 
 #### Supported request fields
@@ -233,6 +233,8 @@ curl http://localhost:11434/v1/embeddings \
 - [x] `seed`
 - [x] `stop`
 - [x] `stream`
+- [x] `stream_options`
+  - [x] `include_usage`
 - [x] `temperature`
 - [x] `top_p`
 - [x] `max_tokens`
@@ -261,6 +263,8 @@ curl http://localhost:11434/v1/embeddings \
 - [x] `seed`
 - [x] `stop`
 - [x] `stream`
+- [x] `stream_options`
+  - [x] `include_usage`
 - [x] `temperature`
 - [x] `top_p`
 - [x] `max_tokens`
