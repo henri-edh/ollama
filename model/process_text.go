@@ -19,7 +19,7 @@ const (
 )
 
 type TextProcessor interface {
-	Encode(string) ([]int32, error)
+	Encode(s string, addSpecial bool) ([]int32, error)
 	Decode([]int32) (string, error)
 	Is(int32, Special) bool
 }
@@ -30,7 +30,8 @@ type Vocabulary struct {
 	Scores []uint32
 	Merges []string
 
-	BOS, EOS int32
+	BOS, EOS       int32
+	AddBOS, AddEOS bool
 
 	specialOnce sync.Once
 	special     []string
@@ -143,7 +144,7 @@ type merge struct {
 	runes []rune
 }
 
-func (bpe BytePairEncoding) Encode(s string) ([]int32, error) {
+func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 	fragments := []fragment{{value: s}}
 	for _, special := range bpe.vocab.SpecialVocabulary() {
 		// TODO: process special tokens concurrently
@@ -278,6 +279,26 @@ func (bpe BytePairEncoding) Encode(s string) ([]int32, error) {
 					}
 				}
 			}
+		}
+	}
+
+	if addSpecial && len(ids) > 0 {
+		if bpe.vocab.AddBOS {
+			if ids[0] == bpe.vocab.BOS {
+				slog.Warn("adding bos token to prompt which already has it", "id", bpe.vocab.BOS)
+			}
+
+			slog.Debug("adding bos token to prompt", "id", bpe.vocab.BOS)
+			ids = append([]int32{bpe.vocab.BOS}, ids...)
+		}
+
+		if bpe.vocab.AddEOS {
+			if ids[len(ids)-1] == bpe.vocab.EOS {
+				slog.Warn("adding eos token to prompt which already has it", "id", bpe.vocab.EOS)
+			}
+
+			slog.Debug("adding eos token to prompt", "id", bpe.vocab.EOS)
+			ids = append(ids, bpe.vocab.EOS)
 		}
 	}
 
