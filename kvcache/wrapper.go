@@ -23,9 +23,9 @@ func NewWrapperCache(caches ...Cache) *WrapperCache {
 	}
 }
 
-func (c *WrapperCache) Init(backend ml.Backend, dtype ml.DType, capacity int32) {
+func (c *WrapperCache) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity, maxBatch int) {
 	for _, cache := range c.caches {
-		cache.Init(backend, dtype, capacity)
+		cache.Init(backend, dtype, maxSequences, capacity, maxBatch)
 	}
 }
 
@@ -85,6 +85,16 @@ func (c *WrapperCache) CopyPrefix(srcSeq, dstSeq int, len int32) {
 	for _, cache := range c.caches {
 		cache.CopyPrefix(srcSeq, dstSeq, len)
 	}
+}
+
+func (c *WrapperCache) CanResume(seq int, pos int32) bool {
+	for _, cache := range c.caches {
+		if !cache.CanResume(seq, pos) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (c *WrapperCache) Remove(seq int, beginIndex, endIndex int32) error {

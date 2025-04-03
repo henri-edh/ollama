@@ -49,13 +49,17 @@ func NewEncoderCache() *EncoderCache {
 	}
 }
 
-func (c *EncoderCache) Init(backend ml.Backend, dtype ml.DType, capacity int32) {
+func (c *EncoderCache) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity, maxBatch int) {
 	if c.config == nil {
 		var config ml.CacheConfig
 		if cc, ok := backend.(ml.BackendCacheConfig); ok {
 			config = cc.CacheConfig()
 		}
 		c.config = &config
+	}
+
+	if maxSequences > 1 {
+		panic(fmt.Errorf("encoder cache does not support multiple sequences; requested: %v", maxSequences))
 	}
 
 	if c.config.CachePadding != 0 && c.config.CachePadding != 1 {
@@ -128,6 +132,10 @@ func (c *EncoderCache) Put(ctx ml.Context, key, value ml.Tensor) {
 
 func (c *EncoderCache) CopyPrefix(srcSeq, dstSeq int, len int32) {
 	panic("encoder cache does not support multiple sequences")
+}
+
+func (c *EncoderCache) CanResume(seq int, pos int32) bool {
+	return true
 }
 
 func (c *EncoderCache) Remove(seq int, beginIndex, endIndex int32) error {

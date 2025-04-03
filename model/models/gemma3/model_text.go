@@ -3,6 +3,7 @@ package gemma3
 import (
 	"math"
 
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
@@ -40,12 +41,11 @@ const (
 	cacheTypeCausal
 )
 
-func newTextModel(c ml.Config) *TextModel {
+func newTextModel(c fs.Config) *TextModel {
 	numBlocks := int(c.Uint("block_count"))
 
 	m := TextModel{
 		SentencePieceModel: model.NewSentencePieceModel(
-			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Scores: c.Floats("tokenizer.ggml.scores"),
