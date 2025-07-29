@@ -18,9 +18,8 @@ const (
 )
 
 type Parser struct {
-	tag        string
-	names      []string
-	properties []string
+	tag   string
+	tools []api.Tool
 
 	state  toolsState
 	buffer []byte
@@ -34,15 +33,10 @@ func NewParser(tmpl *template.Template, tools []api.Tool) *Parser {
 }
 
 func NewParserWithTag(tools []api.Tool, tag string) *Parser {
-	var p Parser
-	for _, t := range tools {
-		p.names = append(p.names, t.Function.Name)
-		for r := range t.Function.Parameters.Properties {
-			p.properties = append(p.properties, r)
-		}
+	return &Parser{
+		tag:   tag,
+		tools: tools,
 	}
-	p.tag = tag
-	return &p
 }
 
 // Add processes a string input to parse tool calls and content that
@@ -121,36 +115,24 @@ func (p *Parser) findTag() (int, bool) {
 // parseToolCall finds the next complete tool call in the buffer
 // incrementing n and advancing the buffer.
 func (p *Parser) parseToolCall() *api.ToolCall {
-	var name string
+	tool, end := findTool(p.tools, p.buffer)
+	if tool == nil {
+		return nil
+	}
+
 	var args map[string]any
-	var end int = len(p.buffer)
-
-	// find tool name
-	var i int
-	for _, n := range p.names {
-		if i = bytes.Index(p.buffer, []byte(n)); i != -1 {
-			if i+len(n) < end {
-				name = n
-				end = i + len(n)
-			}
+	if found, i := findArguments(p.buffer); found == nil {
+		return nil
+	} else {
+		args = found
+		if i > end {
+			end = i
 		}
-	}
-
-	if name == "" {
-		return nil
-	}
-
-	if args, i = p.findArguments(); args == nil {
-		return nil
-	}
-
-	if i > end {
-		end = i
 	}
 
 	tc := &api.ToolCall{
 		Function: api.ToolCallFunction{
-			Name:      name,
+			Name:      tool.Function.Name,
 			Arguments: args,
 			Index:     p.n,
 		},
@@ -161,81 +143,142 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 	return tc
 }
 
+// findTool finds the first tool name in the list that matches the
+// beginning of the buffer, returning nil if no tool is found
+// or if the buffer ends with a partial tool name since we need
+// to wait for more data to disambiguate.
+// The second return value is the end position of the tool name
+// if one is found, otherwise 0.
+func findTool(tools []api.Tool, buf []byte) (*api.Tool, int) {
+	if len(buf) == 0 {
+		return nil, 0
+	}
+
+	// check if buffer ends with a partial tool name
+	// this prevents matching "get" when seeing "get_weather"
+	var longest string
+	for _, t := range tools {
+		if len(t.Function.Name) > len(longest) {
+			longest = t.Function.Name
+		}
+	}
+
+	// Only check up to longest characters from the end
+	for i := 1; i <= min(len(buf), len(longest)); i++ {
+		tail := buf[len(buf)-i:]
+		for _, t := range tools {
+			name := []byte(t.Function.Name)
+			if len(tail) < len(name) && bytes.HasPrefix(name, tail) {
+				return nil, 0
+			}
+		}
+	}
+
+	// find first occurrence of the longest tool name
+	var found *api.Tool
+	start := -1
+	end := -1
+
+	for i := range tools {
+		name := []byte(tools[i].Function.Name)
+		pos := bytes.Index(buf, name)
+		if pos == -1 {
+			continue
+		}
+
+		// Skip if we have a better match already
+		if start != -1 {
+			if pos > start {
+				continue
+			}
+			if pos == start && len(name) <= len(found.Function.Name) {
+				continue
+			}
+		}
+
+		found = &tools[i]
+		start = pos
+		end = pos + len(name)
+	}
+
+	if found != nil {
+		return found, end
+	}
+
+	return nil, 0
+}
+
 // findArguments returns the first object that appears to be
-// arguments and the position where the arguments end, returning nil and 0 if
-// an invalid JSON object or non-arguments object is found first
-func (p *Parser) findArguments() (map[string]any, int) {
-	if len(p.buffer) == 0 {
+// arguments for the provided tool in the provided buffer,
+// returning nil if no arguments are found and the end position
+// TODO (jmorganca): this does not support parsing omitted arguments
+// objects for functions that have all-optional parameters
+// e.g. `{"name": "get_conditions", "arguments": {}}` will work but
+// `{"name": "get_conditions"}` will not currently work
+func findArguments(buffer []byte) (map[string]any, int) {
+	if len(buffer) == 0 {
 		return nil, 0
 	}
 
 	var braces int
 	var start int = -1
-	var end int
-	var object []byte
 
-	// find any outer json object
-	for i, c := range p.buffer {
+	for i, c := range buffer {
 		if c == '{' {
-			braces++
-			if start == -1 {
+			if braces == 0 {
 				start = i
 			}
-		}
-
-		if c == '}' {
+			braces++
+		} else if c == '}' && braces > 0 {
 			braces--
 			if braces == 0 && start != -1 {
-				end = i + 1
-				object = p.buffer[start:end]
-				break
+				object := buffer[start : i+1]
+
+				var data map[string]any
+				if err := json.Unmarshal(object, &data); err != nil {
+					start = -1
+					continue
+				}
+
+				var findObject func(obj map[string]any) (map[string]any, bool)
+				findObject = func(obj map[string]any) (map[string]any, bool) {
+					if _, hasName := obj["name"]; hasName {
+						if args, ok := obj["arguments"].(map[string]any); ok {
+							return args, true
+						}
+						if args, ok := obj["parameters"].(map[string]any); ok {
+							return args, true
+						}
+						return nil, true
+					}
+
+					for _, v := range obj {
+						switch child := v.(type) {
+						case map[string]any:
+							if result, found := findObject(child); found {
+								return result, true
+							}
+						case []any:
+							for _, item := range child {
+								if childObj, ok := item.(map[string]any); ok {
+									if result, found := findObject(childObj); found {
+										return result, true
+									}
+								}
+							}
+						}
+					}
+
+					return nil, false
+				}
+
+				if args, found := findObject(data); found {
+					return args, i
+				}
+
+				return data, i
 			}
 		}
-	}
-
-	if braces > 0 {
-		return nil, 0
-	}
-
-	var data map[string]any
-
-	// not valid json
-	if err := json.Unmarshal(object, &data); err != nil {
-		return nil, 0
-	}
-
-	var find func(obj any) map[string]any
-	find = func(obj any) map[string]any {
-		switch v := obj.(type) {
-		case map[string]any:
-			// check if the object keys are valid tool properties
-			// TODO (jmorganca): check only sets of properties that
-			// go together instead of the entire set
-			for _, prop := range p.properties {
-				if _, exists := v[prop]; exists {
-					return v
-				}
-			}
-
-			for _, value := range v {
-				if result := find(value); result != nil {
-					return result
-				}
-			}
-		case []any:
-			for _, item := range v {
-				if result := find(item); result != nil {
-					return result
-				}
-			}
-		}
-
-		return nil
-	}
-
-	result := find(data)
-	if result != nil {
-		return result, end
 	}
 
 	return nil, 0
