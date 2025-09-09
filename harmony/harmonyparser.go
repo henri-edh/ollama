@@ -1,17 +1,30 @@
 package harmony
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"unicode"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/template"
 )
 
 type harmonyParserState int
+
+func ShouldUseHarmony(modelFamily string, template *template.Template) bool {
+	if slices.Contains([]string{"gptoss", "gpt-oss"}, modelFamily) {
+		// heuristic to check whether the template expects to be parsed via harmony:
+		// search for harmony tags that are nearly always used
+		if template.Contains("<|start|>") && template.Contains("<|end|>") {
+			return true
+		}
+	}
+
+	return false
+}
 
 const (
 	harmonyParserState_LookingForMessageStart harmonyParserState = iota
@@ -76,18 +89,28 @@ func (s *HarmonyParser) AddImplicitStart() {
 	s.acc.WriteString("<|start|>assistant")
 }
 
-func (s *HarmonyParser) AddImplicitStartOrPrefill(lastMessage *api.Message) {
-	if lastMessage != nil && lastMessage.Role == "assistant" {
-		// handle prefilling conditions
-		if lastMessage.Content != "" {
-			s.acc.WriteString("<|start|>assistant<|channel|>final<|message|>")
-			return
-		} else if lastMessage.Thinking != "" {
-			s.acc.WriteString("<|start|>assistant<|channel|>analysis<|message|>")
-			return
-		}
+func Prefill(lastMessage api.Message) string {
+	if lastMessage.Role != "assistant" {
+		return ""
 	}
-	s.AddImplicitStart()
+
+	switch {
+	case strings.TrimSpace(lastMessage.Content) != "":
+		return "<|start|>assistant<|channel|>final<|message|>"
+	case strings.TrimSpace(lastMessage.Thinking) != "":
+		return "<|start|>assistant<|channel|>analysis<|message|>"
+	default:
+		return ""
+	}
+}
+
+// AddImplicitStartOrPrefill adds an implicit start tag or prefill string if provided
+func (s *HarmonyParser) AddImplicitStartOrPrefill(prefillString string) {
+	if strings.TrimSpace(prefillString) != "" {
+		s.acc.WriteString(prefillString)
+	} else {
+		s.AddImplicitStart()
+	}
 }
 
 func (s *HarmonyParser) AddContent(content string) []HarmonyEvent {
@@ -292,7 +315,7 @@ func (h *HarmonyMessageHandler) AddContent(content string, toolParser *HarmonyTo
 	for _, event := range events {
 		switch event := event.(type) {
 		case HarmonyEventHeaderComplete:
-			slog.Log(context.TODO(), logutil.LevelTrace, "harmony event header complete", "header", event.Header)
+			logutil.Trace("harmony event header complete", "header", event.Header)
 			switch event.Header.Channel {
 			case "analysis":
 				if event.Header.Recipient != "" {
@@ -315,7 +338,7 @@ func (h *HarmonyMessageHandler) AddContent(content string, toolParser *HarmonyTo
 				h.state = harmonyMessageState_Normal
 			}
 		case HarmonyEventContentEmitted:
-			slog.Log(context.TODO(), logutil.LevelTrace, "harmony event content", "content", event.Content, "state", h.state)
+			logutil.Trace("harmony event content", "content", event.Content, "state", h.state)
 			if h.state == harmonyMessageState_Normal {
 				contentSb.WriteString(event.Content)
 			} else if h.state == harmonyMessageState_Thinking {
